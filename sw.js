@@ -1,1 +1,160 @@
-if(!self.define){let e,s={};const i=(i,n)=>(i=new URL(i+".js",n).href,s[i]||new Promise(s=>{if("document"in self){const e=document.createElement("script");e.src=i,e.onload=s,document.head.appendChild(e)}else e=i,importScripts(i),s()}).then(()=>{let e=s[i];if(!e)throw new Error(`Module ${i} didn’t register its module`);return e}));self.define=(n,r)=>{const o=e||("document"in self?document.currentScript.src:"")||location.href;if(s[o])return;let c={};const t=e=>i(e,o),l={module:{uri:o},exports:c,require:t};s[o]=Promise.all(n.map(e=>l[e]||t(e))).then(e=>(r(...e),c))}}define(["./workbox-b51dd497"],function(e){"use strict";self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"vite.svg",revision:"8e3a10e157f75ada21ab742c022d5430"},{url:"registerSW.js",revision:"10c7fe111e699327cdea4ec44c4e32e7"},{url:"index.html",revision:"995f2b07da1b73ea5575be29b383d609"},{url:"favicon.svg",revision:"092852ec2c52c0b5c3a6413045af8d75"},{url:"icons/icon.svg",revision:"49d88c737b1afa293165f78f432ba2c1"},{url:"assets/vendor-DlBnNAMw.js",revision:null},{url:"assets/state-ChBe2EGv.js",revision:null},{url:"assets/index-DGTfoSLE.js",revision:null},{url:"assets/index-BmtYTgrh.css",revision:null},{url:"assets/animations-BJOS7rFy.js",revision:null},{url:"favicon.svg",revision:"092852ec2c52c0b5c3a6413045af8d75"},{url:"icons/icon.svg",revision:"49d88c737b1afa293165f78f432ba2c1"},{url:"manifest.webmanifest",revision:"a109227c688f886d9033e08c6ea785d6"}],{}),e.cleanupOutdatedCaches(),e.registerRoute(new e.NavigationRoute(e.createHandlerBoundToURL("index.html"))),e.registerRoute(/^https:\/\/firestore\.googleapis\.com\/.*/i,new e.NetworkFirst({cacheName:"firebase-cache",plugins:[new e.ExpirationPlugin({maxEntries:50,maxAgeSeconds:86400})]}),"GET")});
+// ChromaFall Service Worker
+const CACHE_NAME = 'chromafall-v1';
+const STATIC_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/favicon.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png'
+];
+
+// Install event - cache static assets
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => {
+        console.log('[SW] Caching static assets');
+        return cache.addAll(STATIC_ASSETS);
+      })
+      .then(() => {
+        console.log('[SW] Install complete');
+        return self.skipWaiting();
+      })
+      .catch((err) => {
+        console.error('[SW] Install failed:', err);
+      })
+  );
+});
+
+// Activate event - clean up old caches
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((cacheNames) => {
+        return Promise.all(
+          cacheNames
+            .filter((name) => name !== CACHE_NAME)
+            .map((name) => {
+              console.log('[SW] Deleting old cache:', name);
+              return caches.delete(name);
+            })
+        );
+      })
+      .then(() => {
+        console.log('[SW] Activate complete');
+        return self.clients.claim();
+      })
+  );
+});
+
+// Fetch event - serve from cache, fallback to network
+self.addEventListener('fetch', (event) => {
+  // Skip non-GET requests
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  // Skip cross-origin requests
+  if (!event.request.url.startsWith(self.location.origin)) {
+    return;
+  }
+
+  event.respondWith(
+    caches.match(event.request)
+      .then((cachedResponse) => {
+        if (cachedResponse) {
+          // Return cached response and update cache in background
+          event.waitUntil(
+            fetch(event.request)
+              .then((response) => {
+                if (response.ok) {
+                  caches.open(CACHE_NAME)
+                    .then((cache) => cache.put(event.request, response));
+                }
+              })
+              .catch(() => {})
+          );
+          return cachedResponse;
+        }
+
+        // Not in cache, fetch from network
+        return fetch(event.request)
+          .then((response) => {
+            // Don't cache non-successful responses
+            if (!response.ok) {
+              return response;
+            }
+
+            // Clone the response
+            const responseToCache = response.clone();
+
+            // Cache the fetched response
+            caches.open(CACHE_NAME)
+              .then((cache) => {
+                cache.put(event.request, responseToCache);
+              });
+
+            return response;
+          })
+          .catch((error) => {
+            console.error('[SW] Fetch failed:', error);
+
+            // Return offline page for navigation requests
+            if (event.request.mode === 'navigate') {
+              return caches.match('/');
+            }
+
+            throw error;
+          });
+      })
+  );
+});
+
+// Background sync for game data
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-game-data') {
+    event.waitUntil(syncGameData());
+  }
+});
+
+async function syncGameData() {
+  // Sync game data when online
+  console.log('[SW] Syncing game data');
+}
+
+// Push notifications
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+
+  const data = event.data.json();
+
+  const options = {
+    body: data.body || '새로운 도전이 기다립니다!',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-72.png',
+    vibrate: [100, 50, 100],
+    data: {
+      url: data.url || '/'
+    },
+    actions: [
+      { action: 'play', title: '지금 플레이' },
+      { action: 'close', title: '닫기' }
+    ]
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'ChromaFall', options)
+  );
+});
+
+// Notification click handler
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  if (event.action === 'play' || !event.action) {
+    event.waitUntil(
+      clients.openWindow(event.notification.data.url || '/')
+    );
+  }
+});
